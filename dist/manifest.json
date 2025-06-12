@@ -1,0 +1,8 @@
+{
+	"title": "IFC Object Properties Reporter for Trimble Connect",
+	"icon": "",
+	"url": "",
+	"description": "Search and explore IFC files in your Trimble Connect project with detailed object hierarchy viewing",
+	"configCommand": "render-ifc-pset-reporter-trimble-connect-extension",
+	"enabled": true
+}
