@@ -1,16 +1,9 @@
 {
-  "id": "ifc-pset-reporter",
-  "name": "Trimble Connect IFC PSet Reporter",
-  "version": "1.0.0",
-  "description": "A Trimble Connect extension for generating IFC property set reports",
-  "author": "Your Name",
-  "icon": "file-table.svg",
-  "entry": "index.html",
-  "permissions": [
-    "project:read",
-    "viewer:read",
-    "model:read"
-  ],
-  "category": "reports",
-  "tags": ["ifc", "reports", "properties", "excel"]
+	"id": "ifc-pset-reporter",
+	"name": "Trimble Connect IFC PSet Reporter",
+	"icon": "https://asurafujiwara.github.io/ifc-pset-reporter-trimble-connect-extension/file-table.svg",
+	"url": "https://asurafujiwara.github.io/ifc-pset-reporter-trimble-connect-extension/",
+	"description": "Generate excel reports of IFC property sets in your Trimble Connect projects",
+	"configCommand": "render-ifc-pset-reporter-trimble-connect-extension",
+	"enabled": true
 }
