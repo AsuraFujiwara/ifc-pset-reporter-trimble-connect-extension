@@ -3,6 +3,7 @@ import { TrimbleConnectService } from "./services/trimbleConnect";
 import type { IFCFile } from "./services/trimbleConnect";
 import { IFCExplorer } from "./components/IFCExplorer";
 import { ProjectSelector } from "./components/ProjectSelector";
+import { Configuration } from "./components/Configuration";
 import { Alert, AlertDescription } from "./components/ui/alert";
 import {
 	Card,
@@ -12,6 +13,7 @@ import {
 	CardTitle
 } from "./components/ui/card";
 import { Badge } from "./components/ui/badge";
+import { Button } from "./components/ui/button";
 import "./App.css";
 
 interface Project {
@@ -26,6 +28,7 @@ function App() {
 	const [ifcFiles, setIfcFiles] = useState<IFCFile[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [activeTab, setActiveTab] = useState<"search" | "config">("search");
 
 	useEffect(() => {
 		const checkConnection = async () => {
@@ -60,21 +63,17 @@ function App() {
 		setError(null);
 
 		try {
-			// Get project root folders
-			const rootFolders = await service.getProjectRootFolders(
+			// Get project details to find root folder
+			const projectDetails = await service.getProjectDetails(
 				currentProject.id
 			);
+			console.log("Project details:", projectDetails);
 
-			let foundFolderId: string | null = null;
-
-			// Search for the target folder
-			for (const rootFolderId of rootFolders) {
-				foundFolderId = await service.findFolderByName(
-					rootFolderId,
-					folderName
-				);
-				if (foundFolderId) break;
-			}
+			// Search for the target folder starting from the root
+			const foundFolderId = await service.findFolderByName(
+				projectDetails.rootId,
+				folderName
+			);
 
 			if (!foundFolderId) {
 				setError(`Folder '${folderName}' not found in project`);
@@ -98,17 +97,19 @@ function App() {
 	return (
 		<div className="min-h-screen bg-background p-4">
 			<div className="container mx-auto max-w-6xl">
+				{/* Header Card */}
 				<Card className="mb-6">
 					<CardHeader>
 						<CardTitle className="flex items-center gap-2">
-							Trimble Connect IFC Explorer
-							{isConnected && (
-								<Badge variant="secondary">Connected</Badge>
-							)}
+							Trimble Connect IFC PSet Reporter
+							<Badge
+								variant={isConnected ? "default" : "secondary"}>
+								{isConnected ? "Connected" : "Disconnected"}
+							</Badge>
 						</CardTitle>
 						<CardDescription>
-							Search and explore IFC files in your Trimble Connect
-							project
+							Search for IFC files and generate property set
+							reports
 						</CardDescription>
 					</CardHeader>
 					<CardContent>
@@ -130,17 +131,45 @@ function App() {
 							</div>
 						)}
 
-						<ProjectSelector
-							onSearch={handleFolderSearch}
-							loading={loading}
-							disabled={!isConnected}
-						/>
+						{/* Tab Navigation */}
+						<div className="flex gap-2 mb-4">
+							<Button
+								variant={
+									activeTab === "search"
+										? "default"
+										: "outline"
+								}
+								onClick={() => setActiveTab("search")}>
+								Search & Report
+							</Button>
+							<Button
+								variant={
+									activeTab === "config"
+										? "default"
+										: "outline"
+								}
+								onClick={() => setActiveTab("config")}>
+								Configuration
+							</Button>
+						</div>
+
+						{/* Tab Content */}
+						{activeTab === "search" && (
+							<ProjectSelector
+								onSearch={handleFolderSearch}
+								loading={loading}
+								disabled={!isConnected}
+							/>
+						)}
 					</CardContent>
 				</Card>
 
-				{ifcFiles.length > 0 && (
+				{/* Tab-specific content */}
+				{activeTab === "search" && ifcFiles.length > 0 && (
 					<IFCExplorer files={ifcFiles} service={service} />
 				)}
+
+				{activeTab === "config" && <Configuration service={service} />}
 			</div>
 		</div>
 	);

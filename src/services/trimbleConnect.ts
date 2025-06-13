@@ -6,33 +6,94 @@ export interface IFCFile {
 	size: number;
 	path?: Array<{ name: string }>;
 	type: string;
+	revision?: number;
+	status?: string;
+	parentId?: string;
 }
 
-export interface IFCObject {
+export interface IFCEntity {
 	id: string;
-	name: string;
-	type?: string;
-	children?: IFCObject[];
+	type: string;
 }
 
 export interface IFCObjectProperty {
 	name: string;
-	value: string;
+	value: string | number;
+	type?: string;
+}
+
+export interface IFCObjectWithProperties {
+	id: string;
+	name: string;
+	type: string;
+	properties: IFCObjectProperty[];
+}
+
+export interface ProjectDetails {
+	id: string;
+	name: string;
+	rootId: string;
+}
+
+export interface FolderItem {
+	id: string;
+	name: string;
+	type: "FILE" | "FOLDER";
+	versionId?: string;
+	parentId?: string;
+	size?: number;
+	path?: Array<{ id: string; name: string }>;
 }
 
 export interface TrimbleConnectConfig {
 	projectId?: string;
 	folderName?: string;
 	accessToken?: string;
+	recursive?: boolean;
+	psetNames?: string[];
+	columnOrder?: string[];
 }
 
 export class TrimbleConnectService {
 	private api: WorkspaceAPI.WorkspaceAPI | null = null;
-	private config: TrimbleConnectConfig = {};
+	private config: TrimbleConnectConfig = {
+		recursive: true,
+		psetNames: [
+			"Pset_WallCommon",
+			"Pset_SlabCommon",
+			"Pset_WindowCommon",
+			"Pset_DoorCommon"
+		],
+		columnOrder: ["Object Name", "Model Name", "Model Path"]
+	};
 	private isConnected = false;
+	private accessToken: string | null = null;
 
 	constructor() {
 		this.initializeConnection();
+		this.loadConfig();
+	}
+
+	private loadConfig() {
+		const stored = localStorage.getItem("trimble-connect-config");
+		if (stored) {
+			try {
+				const parsedConfig = JSON.parse(stored);
+				this.config = { ...this.config, ...parsedConfig };
+			} catch (error) {
+				console.error(
+					"Failed to load config from localStorage:",
+					error
+				);
+			}
+		}
+	}
+
+	public saveConfig() {
+		localStorage.setItem(
+			"trimble-connect-config",
+			JSON.stringify(this.config)
+		);
 	}
 
 	private async initializeConnection() {
@@ -66,7 +127,7 @@ export class TrimbleConnectService {
 					data !== "pending" &&
 					data !== "denied"
 				) {
-					this.config.accessToken = data;
+					this.accessToken = data;
 					console.log("[TrimbleConnect] Access token received");
 				} else if (data === "denied") {
 					console.error(
@@ -100,7 +161,32 @@ export class TrimbleConnectService {
 		}
 	}
 
-	public async getCurrentProject() {
+	private async makeApiRequest(
+		url: string,
+		options: RequestInit = {}
+	): Promise<unknown> {
+		if (!this.accessToken) {
+			throw new Error("No access token available");
+		}
+
+		const response = await fetch(url, {
+			...options,
+			headers: {
+				Authorization: `Bearer ${this.accessToken}`,
+				"Content-Type": "application/json",
+				...options.headers
+			}
+		});
+
+		if (!response.ok) {
+			throw new Error(
+				`API request failed: ${response.status} ${response.statusText}`
+			);
+		}
+
+		return response.json();
+	}
+	public async getCurrentProject(): Promise<ProjectDetails> {
 		if (!this.api) {
 			throw new Error("API not connected");
 		}
@@ -108,7 +194,10 @@ export class TrimbleConnectService {
 		try {
 			const project = await this.api.project.getProject();
 			this.config.projectId = project.id;
-			return project;
+
+			// Get additional project details from the API
+			const detailedProject = await this.getProjectDetails(project.id);
+			return detailedProject;
 		} catch (error) {
 			console.error(
 				"[TrimbleConnect] Failed to get current project:",
@@ -117,54 +206,49 @@ export class TrimbleConnectService {
 			throw error;
 		}
 	}
+	public async getProjectDetails(projectId: string): Promise<ProjectDetails> {
+		const url = `https://app21.connect.trimble.com/tc/api/2.0/projects/${projectId}`;
+		const response = (await this.makeApiRequest(url)) as ProjectDetails;
+		return response;
+	}
 
-	public async getProjectRootFolders(projectId?: string): Promise<string[]> {
-		if (!this.api) {
-			throw new Error("API not connected");
-		}
-
-		const targetProjectId = projectId || this.config.projectId;
-		if (!targetProjectId) {
-			throw new Error("No project ID available");
-		}
-		try {
-			// Get project details to find root folder
-			// For now, we'll use a placeholder approach since the exact API structure isn't clear
-			// This would need to be updated based on the actual API response structure
-			return [targetProjectId]; // Fallback to using project ID as root
-		} catch (error) {
-			console.error(
-				"[TrimbleConnect] Failed to get project root folders:",
-				error
-			);
-			throw error;
-		}
+	public async getFolderItems(folderId: string): Promise<FolderItem[]> {
+		const url = `https://app21.connect.trimble.com/tc/api/2.0/folders/${folderId}/items`;
+		const response = (await this.makeApiRequest(url)) as FolderItem[];
+		return response;
 	}
 
 	public async findFolderByName(
 		parentFolderId: string,
 		targetFolderName: string
 	): Promise<string | null> {
-		if (!this.api) {
-			throw new Error("API not connected");
-		}
-
 		try {
-			// This is a placeholder implementation
-			// The actual API calls would depend on the available methods in the WorkspaceAPI
-			console.log(
-				`[TrimbleConnect] Searching for folder '${targetFolderName}' in parent '${parentFolderId}'`
+			const items = await this.getFolderItems(parentFolderId);
+
+			// Look for exact match first
+			const exactMatch = items.find(
+				(item) =>
+					item.type === "FOLDER" &&
+					item.name.toLowerCase() === targetFolderName.toLowerCase()
 			);
 
-			// For now, return a mock folder ID for demonstration
-			// This would need to be implemented based on actual API
-			if (
-				targetFolderName.toLowerCase() === "ifc" ||
-				targetFolderName.toLowerCase() === "models"
-			) {
-				return (
-					"mock-folder-id-" + Math.random().toString(36).substr(2, 9)
-				);
+			if (exactMatch) {
+				return exactMatch.id;
+			}
+
+			// If recursive search is enabled, search in subfolders
+			if (this.config.recursive) {
+				for (const item of items) {
+					if (item.type === "FOLDER") {
+						const found = await this.findFolderByName(
+							item.id,
+							targetFolderName
+						);
+						if (found) {
+							return found;
+						}
+					}
+				}
 			}
 
 			return null;
@@ -175,104 +259,120 @@ export class TrimbleConnectService {
 	}
 
 	public async getIFCFiles(folderId: string): Promise<IFCFile[]> {
-		if (!this.api) {
-			throw new Error("API not connected");
-		}
-
 		try {
-			// This is a placeholder implementation for demonstration
-			console.log(
-				`[TrimbleConnect] Getting IFC files from folder '${folderId}'`
-			);
+			const items = await this.getFolderItems(folderId);
+			const ifcFiles: IFCFile[] = [];
 
-			// Return mock IFC files for demonstration
-			return [
-				{
-					id: "mock-ifc-1",
-					name: "Building_Model.ifc",
-					size: 1024000,
-					type: "FILE",
-					path: [{ name: "Models" }, { name: "IFC" }]
-				},
-				{
-					id: "mock-ifc-2",
-					name: "Structure_Model.ifc",
-					size: 2048000,
-					type: "FILE",
-					path: [{ name: "Models" }, { name: "IFC" }]
+			// Find IFC files in current folder
+			for (const item of items) {
+				if (
+					item.type === "FILE" &&
+					item.name.toLowerCase().endsWith(".ifc")
+				) {
+					ifcFiles.push({
+						id: item.id,
+						name: item.name,
+						size: item.size || 0,
+						type: item.type,
+						path: item.path,
+						parentId: item.parentId
+					});
 				}
-			];
+			}
+
+			// If recursive search is enabled, search in subfolders
+			if (this.config.recursive) {
+				for (const item of items) {
+					if (item.type === "FOLDER") {
+						const subFolderFiles = await this.getIFCFiles(item.id);
+						ifcFiles.push(...subFolderFiles);
+					}
+				}
+			}
+
+			return ifcFiles;
 		} catch (error) {
 			console.error("[TrimbleConnect] Failed to get IFC files:", error);
 			throw error;
 		}
 	}
-
-	public async getIFCObjects(fileId: string): Promise<IFCObject[]> {
-		if (!this.api) {
-			throw new Error("API not connected");
-		}
-
-		try {
-			// Use the correct viewer API method
-			// Note: This might need to be adjusted based on the actual API structure
-			console.log(
-				`[TrimbleConnect] Getting objects for file '${fileId}'`
-			);
-
-			// Return mock objects for demonstration
-			return [
-				{
-					id: "object-1",
-					name: "IfcBuilding",
-					type: "IfcBuilding",
-					children: [
-						{
-							id: "object-2",
-							name: "IfcBuildingStorey",
-							type: "IfcBuildingStorey",
-							children: [
-								{
-									id: "object-3",
-									name: "IfcWall",
-									type: "IfcWall"
-								},
-								{
-									id: "object-4",
-									name: "IfcSlab",
-									type: "IfcSlab"
-								}
-							]
-						}
-					]
-				}
-			];
-		} catch (error) {
-			console.error("[TrimbleConnect] Failed to get IFC objects:", error);
-			throw error;
-		}
+	public async getModelEntities(modelId: string): Promise<IFCEntity[]> {
+		const url = `https://model-api21.connect.trimble.com/models/${modelId}/entities`;
+		const response = (await this.makeApiRequest(url)) as {
+			items: IFCEntity[];
+		};
+		return response.items || [];
 	}
 
-	public async getIFCObjectProperties(
-		fileId: string,
-		objectId: string
-	): Promise<IFCObjectProperty[]> {
+	public async getObjectProperties(
+		modelId: string,
+		entityIds: string[]
+	): Promise<IFCObjectWithProperties[]> {
 		if (!this.api) {
 			throw new Error("API not connected");
 		}
 
 		try {
-			console.log(
-				`[TrimbleConnect] Getting properties for object '${objectId}' in file '${fileId}'`
+			// Convert entity IDs to runtime IDs
+			const runtimeIds = await this.api.viewer.convertToObjectRuntimeIds(
+				modelId,
+				entityIds
 			);
 
-			// Return mock properties for demonstration
-			return [
-				{ name: "Name", value: "Example Object" },
-				{ name: "Type", value: "IfcWall" },
-				{ name: "Material", value: "Concrete" },
-				{ name: "Height", value: "3000mm" }
-			];
+			// Get object properties
+			const properties = await this.api.viewer.getObjectProperties(
+				modelId,
+				runtimeIds
+			);
+
+			// Transform properties into our format
+			const result: IFCObjectWithProperties[] = [];
+
+			for (let i = 0; i < entityIds.length; i++) {
+				const entityId = entityIds[i];
+				const objectProps = properties[i] || {};
+				interface ExtendedObjectProperties {
+					name?: string;
+					type?: string;
+					properties?: Record<string, string | number>;
+				}
+
+				const extendedProps = objectProps as ExtendedObjectProperties;
+
+				const ifcObject: IFCObjectWithProperties = {
+					id: entityId,
+					name: extendedProps.name || `Object_${entityId}`,
+					type: extendedProps.type || "Unknown",
+					properties: []
+				};
+
+				// Extract properties and filter by configured pset names
+				if (objectProps.properties) {
+					for (const [propName, propValue] of Object.entries(
+						objectProps.properties
+					)) {
+						// Check if this property belongs to one of the configured psets
+						const shouldInclude =
+							this.config.psetNames?.some(
+								(psetName) =>
+									propName.startsWith(psetName) ||
+									this.config.psetNames?.includes("*") // Include all if "*" is specified
+							) ?? true;
+
+						if (shouldInclude) {
+							ifcObject.properties.push({
+								name: propName,
+								value: propValue as string | number,
+								type: typeof propValue
+							});
+						}
+					}
+				}
+
+				result.push(ifcObject);
+			}
+
+			return result;
 		} catch (error) {
 			console.error(
 				"[TrimbleConnect] Failed to get object properties:",
@@ -292,5 +392,6 @@ export class TrimbleConnectService {
 
 	public updateConfig(newConfig: Partial<TrimbleConnectConfig>): void {
 		this.config = { ...this.config, ...newConfig };
+		this.saveConfig();
 	}
 }

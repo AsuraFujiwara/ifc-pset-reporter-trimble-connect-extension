@@ -1,14 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle
-} from "@/components/ui/card";
 
 interface ProjectSelectorProps {
 	onSearch: (folderName: string) => void;
@@ -31,36 +23,21 @@ export function ProjectSelector({
 	};
 
 	return (
-		<Card>
-			<CardHeader>
-				<CardTitle>Search for IFC Files</CardTitle>
-				<CardDescription>
-					Enter the folder name to search for IFC files within your
-					project
-				</CardDescription>
-			</CardHeader>
-			<CardContent>
-				<form onSubmit={handleSubmit} className="space-y-4">
-					<div className="space-y-2">
-						<Label htmlFor="folderName">Folder Name</Label>
-						<Input
-							id="folderName"
-							type="text"
-							placeholder="Enter folder name..."
-							value={folderName}
-							onChange={(e) => setFolderName(e.target.value)}
-							disabled={disabled}
-							className="w-full"
-						/>
-					</div>
-					<Button
-						type="submit"
-						disabled={disabled || loading || !folderName.trim()}
-						className="w-full">
-						{loading ? "Searching..." : "Search IFC Files"}
-					</Button>
-				</form>
-			</CardContent>
-		</Card>
+		<div className="flex gap-2">
+			<Input
+				type="text"
+				placeholder="Type in folder name"
+				value={folderName}
+				onChange={(e) => setFolderName(e.target.value)}
+				disabled={disabled}
+				className="flex-1"
+				onKeyPress={(e) => e.key === "Enter" && handleSubmit(e)}
+			/>
+			<Button
+				onClick={handleSubmit}
+				disabled={disabled || loading || !folderName.trim()}>
+				{loading ? "Searching..." : "Search"}
+			</Button>
+		</div>
 	);
 }

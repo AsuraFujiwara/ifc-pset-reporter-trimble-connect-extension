@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { TrimbleConnectService } from "@/services/trimbleConnect";
-import type { IFCFile, IFCObject } from "@/services/trimbleConnect";
+import type { IFCFile } from "@/services/trimbleConnect";
+// Note: xlsx import will be resolved when the package is properly installed
+// import * as XLSX from 'xlsx';
 import {
 	Card,
 	CardContent,
@@ -8,15 +10,8 @@ import {
 	CardHeader,
 	CardTitle
 } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-	Accordion,
-	AccordionContent,
-	AccordionItem,
-	AccordionTrigger
-} from "@/components/ui/accordion";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
 interface IFCExplorerProps {
@@ -24,45 +19,10 @@ interface IFCExplorerProps {
 	service: TrimbleConnectService;
 }
 
-interface FileObjectsState {
-	[fileId: string]: {
-		objects: IFCObject[];
-		loading: boolean;
-		error: string | null;
-	};
-}
-
 export function IFCExplorer({ files, service }: IFCExplorerProps) {
-	const [fileObjects, setFileObjects] = useState<FileObjectsState>({});
-
-	const loadFileObjects = async (fileId: string) => {
-		if (fileObjects[fileId]) return; // Already loaded or loading
-
-		setFileObjects((prev) => ({
-			...prev,
-			[fileId]: { objects: [], loading: true, error: null }
-		}));
-
-		try {
-			const objects = await service.getIFCObjects(fileId);
-			setFileObjects((prev) => ({
-				...prev,
-				[fileId]: { objects, loading: false, error: null }
-			}));
-		} catch (error) {
-			setFileObjects((prev) => ({
-				...prev,
-				[fileId]: {
-					objects: [],
-					loading: false,
-					error:
-						error instanceof Error
-							? error.message
-							: "Failed to load objects"
-				}
-			}));
-		}
-	};
+	const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+	const [reportProgress, setReportProgress] = useState(0);
+	const [error, setError] = useState<string | null>(null);
 
 	const formatFileSize = (bytes: number): string => {
 		const sizes = ["Bytes", "KB", "MB", "GB"];
@@ -73,30 +33,145 @@ export function IFCExplorer({ files, service }: IFCExplorerProps) {
 		);
 	};
 
-	const renderObjectHierarchy = (
-		objects: IFCObject[],
-		depth = 0
-	): React.ReactElement[] => {
-		return objects.map((obj, index) => (
-			<div key={`${obj.id}-${index}`} className={`ml-${depth * 4} py-1`}>
-				<div className="flex items-center gap-2">
-					<span className="text-sm font-medium">{obj.name}</span>
-					{obj.type && (
-						<Badge variant="outline" className="text-xs">
-							{obj.type}
-						</Badge>
-					)}
-				</div>
-				<div className="text-xs text-muted-foreground">
-					ID: {obj.id}
-				</div>
-				{obj.children && obj.children.length > 0 && (
-					<div className="mt-1">
-						{renderObjectHierarchy(obj.children, depth + 1)}
-					</div>
-				)}
-			</div>
-		));
+	const generateExcelReport = async () => {
+		setIsGeneratingReport(true);
+		setReportProgress(0);
+		setError(null);
+		try {
+			const allObjects: Array<Record<string, string | number>> = [];
+
+			const totalFiles = files.length;
+
+			for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+				const file = files[fileIndex];
+				setReportProgress((fileIndex / totalFiles) * 50); // First 50% for getting entities
+
+				try {
+					// Get model entities
+					const entities = await service.getModelEntities(file.id);
+
+					// Get properties for all entities (in batches for performance)
+					const batchSize = 50;
+					const entityBatches = [];
+					for (let i = 0; i < entities.length; i += batchSize) {
+						entityBatches.push(entities.slice(i, i + batchSize));
+					}
+
+					let processedBatches = 0;
+					for (const batch of entityBatches) {
+						const entityIds = batch.map((e) => e.id);
+						const objectsWithProperties =
+							await service.getObjectProperties(
+								file.id,
+								entityIds
+							);
+
+						// Transform to Excel format
+						for (const obj of objectsWithProperties) {
+							const row: Record<string, string | number> = {
+								objectName: obj.name,
+								modelName: file.name,
+								modelPath:
+									file.path?.map((p) => p.name).join(" > ") ||
+									""
+							};
+
+							// Add property values as columns
+							for (const prop of obj.properties) {
+								row[prop.name] = prop.value;
+							}
+
+							allObjects.push(row);
+						}
+
+						processedBatches++;
+						setReportProgress(
+							50 + (processedBatches / entityBatches.length) * 50
+						);
+					}
+				} catch (fileError) {
+					console.error(
+						`Error processing file ${file.name}:`,
+						fileError
+					);
+					// Continue with other files
+				}
+			}
+
+			if (allObjects.length === 0) {
+				setError("No objects found to export");
+				return;
+			}
+
+			// TODO: Replace this with actual XLSX implementation once package is properly installed
+			// For now, create a CSV export as a fallback
+			const config = service.getConfig();
+			const columnOrder = config.columnOrder || [
+				"objectName",
+				"modelName",
+				"modelPath"
+			];
+
+			// Get all unique property names
+			const allPropertyNames = new Set<string>();
+			allObjects.forEach((obj) => {
+				Object.keys(obj).forEach((key) => allPropertyNames.add(key));
+			});
+
+			// Create ordered columns: first the standard columns, then property columns
+			const orderedColumns = [
+				...columnOrder,
+				...Array.from(allPropertyNames)
+					.filter((name) => !columnOrder.includes(name))
+					.sort()
+			];
+
+			// Create CSV content
+			const csvHeader = orderedColumns.join(",");
+			const csvRows = allObjects.map((obj) =>
+				orderedColumns
+					.map((col) => {
+						const value = obj[col] || "";
+						// Escape commas and quotes in CSV
+						return typeof value === "string" &&
+							(value.includes(",") || value.includes('"'))
+							? `"${value.replace(/"/g, '""')}"`
+							: String(value);
+					})
+					.join(",")
+			);
+
+			const csvContent = [csvHeader, ...csvRows].join("\n");
+
+			// Download as CSV file
+			const blob = new Blob([csvContent], {
+				type: "text/csv;charset=utf-8;"
+			});
+			const link = document.createElement("a");
+			const url = URL.createObjectURL(blob);
+			link.setAttribute("href", url);
+			link.setAttribute(
+				"download",
+				`IFC_Properties_Report_${
+					new Date().toISOString().split("T")[0]
+				}.csv`
+			);
+			link.style.visibility = "hidden";
+			document.body.appendChild(link);
+			link.click();
+			document.body.removeChild(link);
+
+			setReportProgress(100);
+		} catch (error) {
+			console.error("Error generating report:", error);
+			setError(
+				error instanceof Error
+					? error.message
+					: "Failed to generate report"
+			);
+		} finally {
+			setIsGeneratingReport(false);
+		}
 	};
 
 	return (
@@ -109,106 +184,73 @@ export function IFCExplorer({ files, service }: IFCExplorerProps) {
 				</CardDescription>
 			</CardHeader>
 			<CardContent>
-				<Accordion type="single" collapsible className="w-full">
-					{files.map((file) => (
-						<AccordionItem key={file.id} value={file.id}>
-							<AccordionTrigger className="text-left">
-								<div className="flex flex-col items-start gap-1">
-									<span className="font-medium">
-										{file.name}
-									</span>
-									<div className="flex items-center gap-2 text-sm text-muted-foreground">
-										<span>
-											Size: {formatFileSize(file.size)}
-										</span>
-										<span>•</span>
-										<span>ID: {file.id}</span>
-									</div>
-									{file.path && file.path.length > 0 && (
-										<div className="text-xs text-muted-foreground">
+				{" "}
+				{error && (
+					<Alert variant="destructive" className="mb-4">
+						<AlertDescription>{error}</AlertDescription>
+					</Alert>
+				)}
+				{/* Large text area showing IFC files list */}
+				<div className="mb-4">
+					<div className="border rounded-lg p-4 bg-muted/50 min-h-[300px] max-h-[400px] overflow-y-auto">
+						{files.length === 0 ? (
+							<div className="flex items-center justify-center h-[250px] text-muted-foreground">
+								LIST OF IFC FILES FOUND RECURSIVELY FROM FOLDER
+							</div>
+						) : (
+							<div className="space-y-2">
+								<div className="font-medium text-sm text-muted-foreground mb-3">
+									LIST OF IFC FILES FOUND RECURSIVELY FROM
+									FOLDER
+								</div>
+								{files.map((file, index) => (
+									<div
+										key={file.id}
+										className="text-sm font-mono">
+										<div className="font-medium">
+											{index + 1}. {file.name}
+										</div>
+										<div className="text-muted-foreground ml-4">
+											ID: {file.id} | Size:{" "}
+											{formatFileSize(file.size)}
+										</div>
+										<div className="text-muted-foreground ml-4">
 											Path:{" "}
 											{file.path
-												.map(
-													(p: { name: string }) =>
-														p.name
-												)
-												.join(" > ")}
+												?.map((p) => p.name)
+												.join(" > ") || "Root"}
 										</div>
-									)}
-								</div>
-							</AccordionTrigger>
-							<AccordionContent>
-								<div className="space-y-4">
-									<div className="flex items-center justify-between">
-										<h4 className="text-sm font-medium">
-											IFC Objects
-										</h4>
-										<Button
-											size="sm"
-											variant="outline"
-											onClick={() =>
-												loadFileObjects(file.id)
-											}
-											disabled={
-												fileObjects[file.id]?.loading
-											}>
-											{fileObjects[file.id]?.loading
-												? "Loading..."
-												: "Load Objects"}
-										</Button>
 									</div>
+								))}
+							</div>
+						)}
+					</div>
+				</div>
+				{/* Generate Report Section */}
+				<div className="space-y-4">
+					{isGeneratingReport && (
+						<div className="space-y-2">
+							<div className="flex items-center justify-between text-sm">
+								<span>Generating Excel report...</span>
+								<span>{Math.round(reportProgress)}%</span>
+							</div>
+							<Progress
+								value={reportProgress}
+								className="w-full"
+							/>
+						</div>
+					)}
 
-									{fileObjects[file.id]?.loading && (
-										<div className="space-y-2">
-											<Skeleton className="h-4 w-full" />
-											<Skeleton className="h-4 w-3/4" />
-											<Skeleton className="h-4 w-1/2" />
-										</div>
-									)}
-
-									{fileObjects[file.id]?.error && (
-										<Alert variant="destructive">
-											<AlertDescription>
-												{fileObjects[file.id].error}
-											</AlertDescription>
-										</Alert>
-									)}
-
-									{fileObjects[file.id]?.objects &&
-										fileObjects[file.id].objects.length >
-											0 && (
-											<div className="border rounded-lg p-4 max-h-96 overflow-y-auto">
-												<div className="text-sm font-medium mb-2">
-													Found{" "}
-													{
-														fileObjects[file.id]
-															.objects.length
-													}{" "}
-													top-level objects:
-												</div>
-												<div className="space-y-1">
-													{renderObjectHierarchy(
-														fileObjects[file.id]
-															.objects
-													)}
-												</div>
-											</div>
-										)}
-
-									{fileObjects[file.id]?.objects &&
-										fileObjects[file.id].objects.length ===
-											0 &&
-										!fileObjects[file.id].loading && (
-											<div className="text-sm text-muted-foreground">
-												No objects found (file may not
-												be processed yet)
-											</div>
-										)}
-								</div>
-							</AccordionContent>
-						</AccordionItem>
-					))}
-				</Accordion>
+					<Button
+						onClick={generateExcelReport}
+						disabled={isGeneratingReport || files.length === 0}
+						className="w-full"
+						size="lg">
+						{isGeneratingReport
+							? "Generating Report..."
+							: "GENERATE REPORT"}
+					</Button>
+				</div>
 			</CardContent>
 		</Card>
 	);

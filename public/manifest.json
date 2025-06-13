@@ -1,8 +1,12 @@
 {
-	"title": "IFC Object Properties Reporter for Trimble Connect",
-	"icon": "",
-	"url": "",
-	"description": "Search and explore IFC files in your Trimble Connect project with detailed object hierarchy viewing",
-	"configCommand": "render-ifc-pset-reporter-trimble-connect-extension",
-	"enabled": true
+	"id": "ifc-pset-reporter",
+	"name": "Trimble Connect IFC PSet Reporter",
+	"version": "1.0.0",
+	"description": "A Trimble Connect extension for generating IFC property set reports",
+	"author": "Your Name",
+	"icon": "file-table.svg",
+	"entry": "index.html",
+	"permissions": ["project:read", "viewer:read", "model:read"],
+	"category": "reports",
+	"tags": ["ifc", "reports", "properties", "excel"]
 }
